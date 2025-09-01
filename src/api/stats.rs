@@ -1,18 +1,28 @@
 use axum::{extract::Query, Json};
 use chrono::{Duration, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     error::AppResult,
     models::{compute_is_due, compute_next_due, AppState, Zone, ZoneView},
 };
 
-#[utoipa::path(get, path="/api/v1/stats/overview", tag="stats",
-    responses((status=200, body=serde_json::Value))
+#[derive(Serialize, ToSchema)]
+pub struct StatsOverview {
+    pub rooms_total: i64,
+    pub zones_total: i64,
+    pub due_zones: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/stats/overview",
+    responses((status = 200, description = "Overview stats", body = StatsOverview))
 )]
 pub async fn overview(
     state: axum::extract::State<std::sync::Arc<AppState>>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<StatsOverview>> {
     let (rooms_total,): (i64,) =
         sqlx::query_as("SELECT COUNT(1) FROM rooms WHERE deleted_at IS NULL")
             .fetch_one(&state.pool)
@@ -36,21 +46,23 @@ pub async fn overview(
         }
     }
 
-    Ok(Json(serde_json::json!({
-        "rooms_total": rooms_total,
-        "zones_total": zones_total,
-        "due_zones": due_zones,
-    })))
+    Ok(Json(StatsOverview {
+        rooms_total,
+        zones_total,
+        due_zones,
+    }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 pub struct DueParams {
     pub within: Option<String>,
 }
 
-#[utoipa::path(get, path="/api/v1/zones/due", tag="stats",
+#[utoipa::path(
+    get,
+    path = "/zones/due",
     params(DueParams),
-    responses((status=200, body=Vec<ZoneView>))
+    responses((status = 200, description = "Zones due", body = [ZoneView]))
 )]
 pub async fn zones_due(
     state: axum::extract::State<std::sync::Arc<AppState>>,

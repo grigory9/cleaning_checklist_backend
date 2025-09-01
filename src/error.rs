@@ -1,6 +1,7 @@
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
 use serde::Serialize;
 use thiserror::Error;
+use std::io;
 
 pub type AppResult<T> = Result<T, AppError>;
 
@@ -16,6 +17,8 @@ pub enum AppError {
     AxumJsonRejection(#[from] axum::extract::rejection::JsonRejection),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 #[derive(Serialize)]
@@ -32,6 +35,7 @@ impl IntoResponse for AppError {
             AppError::Sqlx(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
             AppError::AxumJsonRejection(_) => (StatusCode::BAD_REQUEST, "invalid_json"),
             AppError::Other(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+            AppError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "io_error"),
         };
         let message = self.to_string();
         (status, Json(ErrorBody{ code, message })).into_response()
