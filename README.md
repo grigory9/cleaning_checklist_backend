@@ -1,4 +1,4 @@
-# cleaning_checklist_backend
+## Cleaning checklist app backend
 
 1) install rust 
 
@@ -9,4 +9,17 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ```bash
 cargo run
+```
+
+
+#### Access to openapi json
+http://localhost:8080/api-doc/openapi.json
+
+#### Acces to swagger
+http://localhost:8080/swagger-ui
+
+
+#### Reset database
+```bash
+rm -f cleaner.db && touch cleaner.db
 ```
