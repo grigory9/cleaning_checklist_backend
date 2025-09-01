@@ -6,6 +6,7 @@ use super::{
     stats::{self, StatsOverview},
     zones::{self, BulkClean, BulkCleanResponse, CleanBody},
 };
+
 use crate::models::{
     Frequency, NewRoom, NewZone, Room, RoomView, UpdateRoom, UpdateZone, Zone, ZoneView,
 };
