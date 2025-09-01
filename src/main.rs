@@ -1,20 +1,20 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::{
-    routing::{delete, get, patch, post},
+    routing::{get, post},
     Router,
 };
-use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::sqlite::SqlitePoolOptions;
 
 mod api;
 mod error;
 mod models;
 
 use api::{docs, rooms, stats, zones};
-use error::AppResult;
+use error::{AppError, AppResult};
+
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
@@ -43,7 +43,10 @@ async fn main() -> AppResult<()> {
         .await?;
 
     // Миграции (каталог migrations)
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| AppError::Other(e.into()))?;
 
     let state = Arc::new(models::AppState { pool });
 
@@ -76,8 +79,7 @@ async fn main() -> AppResult<()> {
 
     let app = Router::new()
         .nest("/api/v1", api_routes)
-        .merge(docs::swagger())
-        .layer(TraceLayer::new_for_http())
+        .merge(docs::swagger_ui())
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
