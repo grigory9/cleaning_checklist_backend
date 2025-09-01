@@ -1,8 +1,12 @@
-use axum::Router;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use super::{rooms, zones::{self, BulkClean, BulkCleanResponse, CleanBody}, stats::{self, StatsOverview}};
+use super::{
+    rooms,
+    stats::{self, StatsOverview},
+    zones::{self, BulkClean, BulkCleanResponse, CleanBody},
+};
+
 use crate::models::{
     Frequency, NewRoom, NewZone, Room, RoomView, UpdateRoom, UpdateZone, Zone, ZoneView,
 };
@@ -50,9 +54,6 @@ use crate::models::{
 )]
 pub struct ApiDoc;
 
-pub fn swagger_ui() -> Router {
-    SwaggerUi::new("/swagger-ui")
-        .url("/api-doc/openapi.json", ApiDoc::openapi())
-        .into()
+pub fn swagger_ui() -> SwaggerUi {
+    SwaggerUi::new("/swagger-ui").url("/api-doc/openapi.json", ApiDoc::openapi())
 }
-
