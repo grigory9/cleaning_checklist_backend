@@ -1,9 +1,11 @@
 use axum::Router;
-use utoipa::{OpenApi, Modify, openapi::security::{ApiKey, ApiKeyValue, SecurityScheme}};
+use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use super::{rooms, zones, stats};
-use crate::models::{RoomView, NewRoom, UpdateRoom, ZoneView, NewZone, UpdateZone};
+use super::{rooms, zones::{self, BulkClean, BulkCleanResponse, CleanBody}, stats::{self, StatsOverview}};
+use crate::models::{
+    Frequency, NewRoom, NewZone, Room, RoomView, UpdateRoom, UpdateZone, Zone, ZoneView,
+};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -22,17 +24,35 @@ use crate::models::{RoomView, NewRoom, UpdateRoom, ZoneView, NewZone, UpdateZone
         zones::clean_zone,
         zones::bulk_clean,
         stats::overview,
-        stats::zones_due
+        stats::zones_due,
     ),
-    components(schemas(RoomView, NewRoom, UpdateRoom, ZoneView, NewZone, UpdateZone)),
+    components(schemas(
+        Room,
+        RoomView,
+        NewRoom,
+        UpdateRoom,
+        Zone,
+        ZoneView,
+        NewZone,
+        UpdateZone,
+        Frequency,
+        CleanBody,
+        BulkClean,
+        BulkCleanResponse,
+        StatsOverview,
+    )),
     tags(
-        (name = "rooms", description = "Операции с комнатами"),
-        (name = "zones", description = "Операции с зонами"),
-        (name = "stats", description = "Сводки и due")
-    )
+        (name = "rooms", description = "Operations with rooms"),
+        (name = "zones", description = "Operations with zones"),
+        (name = "stats", description = "Statistics overview"),
+    ),
+    servers((url = "/api/v1"))
 )]
 pub struct ApiDoc;
 
-pub fn swagger() -> Router {
-    SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()).into()
+pub fn swagger_ui() -> Router {
+    SwaggerUi::new("/swagger-ui")
+        .url("/api-doc/openapi.json", ApiDoc::openapi())
+        .into()
 }
+
