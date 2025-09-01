@@ -1,0 +1,277 @@
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+};
+use chrono::Utc;
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::{
+    error::{AppError, AppResult},
+    models::{compute_is_due, compute_next_due, AppState, NewZone, UpdateZone, Zone, ZoneView},
+};
+
+#[derive(Deserialize)]
+pub struct ListZones {
+    pub only_due: Option<bool>,
+}
+
+#[utoipa::path(
+    get, path="/api/v1/rooms/{room_id}/zones", tag="zones",
+    params(("room_id" = String, Path), ListZones),
+    responses((status=200, body=Vec<ZoneView>))
+)]
+pub async fn list_zones(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(room_id): Path<String>,
+    Query(p): Query<ListZones>,
+) -> AppResult<Json<Vec<ZoneView>>> {
+    let mut zones: Vec<Zone> = sqlx::query_as::<_, Zone>(
+        r#"SELECT id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at
+           FROM zones WHERE room_id = ?1 AND deleted_at IS NULL
+           ORDER BY created_at DESC"#
+    ).bind(&room_id).fetch_all(&state.pool).await?;
+
+    let mut out = Vec::with_capacity(zones.len());
+    for z in zones.drain(..) {
+        let next_due = compute_next_due(z.last_cleaned_at, &z.frequency, z.custom_interval_days);
+        let is_due = compute_is_due(next_due);
+        if p.only_due.unwrap_or(false) && !is_due {
+            continue;
+        }
+        out.push(ZoneView {
+            id: z.id,
+            room_id: z.room_id,
+            name: z.name,
+            icon: z.icon,
+            frequency: z.frequency,
+            custom_interval_days: z.custom_interval_days,
+            last_cleaned_at: z.last_cleaned_at,
+            next_due_at: next_due,
+            is_due,
+            created_at: z.created_at,
+            updated_at: z.updated_at,
+            deleted_at: z.deleted_at,
+        });
+    }
+    Ok(Json(out))
+}
+
+#[utoipa::path(post, path="/api/v1/rooms/{room_id}/zones", tag="zones",
+    request_body=NewZone,
+    params(("room_id" = String, Path)),
+    responses((status=201, body=ZoneView))
+)]
+pub async fn create_zone(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(room_id): Path<String>,
+    Json(body): Json<NewZone>,
+) -> AppResult<(axum::http::StatusCode, Json<ZoneView>)> {
+    if body.name.trim().is_empty() {
+        return Err(AppError::Validation("name is required".into()));
+    }
+    if matches!(body.frequency, crate::models::Frequency::Custom)
+        && body.custom_interval_days.unwrap_or(0) == 0
+    {
+        return Err(AppError::Validation(
+            "custom_interval_days must be >= 1 for custom frequency".into(),
+        ));
+    }
+    // проверим, что комната существует и не удалена
+    let exists: (i64,) =
+        sqlx::query_as("SELECT COUNT(1) FROM rooms WHERE id = ?1 AND deleted_at IS NULL")
+            .bind(&room_id)
+            .fetch_one(&state.pool)
+            .await?;
+    if exists.0 == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    let now = Utc::now();
+    let id = Uuid::new_v4().to_string();
+    sqlx::query!(
+        r#"INSERT INTO zones(id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, NULL)"#,
+        id, room_id, body.name, body.icon, body.frequency.as_str(), body.custom_interval_days.map(|v| v as i64), now
+    ).execute(&state.pool).await?;
+
+    let next_due = None;
+    let is_due = true; // ещё не убиралось
+    let view = ZoneView {
+        id,
+        room_id,
+        name: body.name,
+        icon: body.icon,
+        frequency: body.frequency.as_str().into(),
+        custom_interval_days: body.custom_interval_days.map(|v| v as i64),
+        last_cleaned_at: None,
+        next_due_at: next_due,
+        is_due,
+        created_at: now,
+        updated_at: now,
+        deleted_at: None,
+    };
+    Ok((axum::http::StatusCode::CREATED, Json(view)))
+}
+
+#[utoipa::path(get, path="/api/v1/zones/{id}", tag="zones",
+    params(("id" = String, Path)),
+    responses((status=200, body=ZoneView), (status=404))
+)]
+pub async fn get_zone(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<String>,
+) -> AppResult<Json<ZoneView>> {
+    let z = sqlx::query_as::<_, Zone>(
+        r#"SELECT id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at
+           FROM zones WHERE id = ?1 AND deleted_at IS NULL"#
+    ).bind(&id).fetch_optional(&state.pool).await?;
+    let z = z.ok_or(AppError::NotFound)?;
+    let next_due = compute_next_due(z.last_cleaned_at, &z.frequency, z.custom_interval_days);
+    let is_due = compute_is_due(next_due);
+    Ok(Json(ZoneView {
+        id: z.id,
+        room_id: z.room_id,
+        name: z.name,
+        icon: z.icon,
+        frequency: z.frequency,
+        custom_interval_days: z.custom_interval_days,
+        last_cleaned_at: z.last_cleaned_at,
+        next_due_at: next_due,
+        is_due,
+        created_at: z.created_at,
+        updated_at: z.updated_at,
+        deleted_at: z.deleted_at,
+    }))
+}
+
+#[utoipa::path(patch, path="/api/v1/zones/{id}", tag="zones",
+    request_body=UpdateZone,
+    params(("id" = String, Path)),
+    responses((status=200, body=ZoneView), (status=404))
+)]
+pub async fn update_zone(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateZone>,
+) -> AppResult<Json<ZoneView>> {
+    let z = sqlx::query_as::<_, Zone>(
+        "SELECT id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at FROM zones WHERE id = ?1 AND deleted_at IS NULL"
+    ).bind(&id).fetch_optional(&state.pool).await?;
+    let mut z = z.ok_or(AppError::NotFound)?;
+
+    let now = Utc::now();
+    let name = body.name.unwrap_or(z.name.clone());
+    let icon = body.icon.or(z.icon.clone());
+    let frequency = body
+        .frequency
+        .map(|f| f.as_str().to_string())
+        .unwrap_or(z.frequency.clone());
+    let custom_interval_days = body
+        .custom_interval_days
+        .map(|v| v as i64)
+        .or(z.custom_interval_days);
+
+    if frequency == "custom" && custom_interval_days.unwrap_or(0) <= 0 {
+        return Err(AppError::Validation(
+            "custom_interval_days must be >= 1".into(),
+        ));
+    }
+
+    sqlx::query!(
+        "UPDATE zones SET name = ?1, icon = ?2, frequency = ?3, custom_interval_days = ?4, updated_at = ?5 WHERE id = ?6",
+        name, icon, frequency, custom_interval_days, now, id
+    ).execute(&state.pool).await?;
+
+    z.name = name;
+    z.icon = icon;
+    z.frequency = frequency;
+    z.custom_interval_days = custom_interval_days;
+    z.updated_at = now;
+    let next_due = compute_next_due(z.last_cleaned_at, &z.frequency, z.custom_interval_days);
+    let is_due = compute_is_due(next_due);
+    Ok(Json(ZoneView {
+        id: z.id,
+        room_id: z.room_id,
+        name: z.name,
+        icon: z.icon,
+        frequency: z.frequency,
+        custom_interval_days: z.custom_interval_days,
+        last_cleaned_at: z.last_cleaned_at,
+        next_due_at: next_due,
+        is_due,
+        created_at: z.created_at,
+        updated_at: z.updated_at,
+        deleted_at: z.deleted_at,
+    }))
+}
+
+#[utoipa::path(delete, path="/api/v1/zones/{id}", tag="zones",
+    params(("id" = String, Path)),
+    responses((status=204), (status=404))
+)]
+pub async fn delete_zone(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<String>,
+) -> AppResult<axum::http::StatusCode> {
+    let now = Utc::now();
+    let res = sqlx::query!(
+        "UPDATE zones SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        now,
+        id
+    )
+    .execute(&state.pool)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct CleanBody {
+    pub cleaned_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[utoipa::path(post, path="/api/v1/zones/{id}/clean", tag="zones",
+    request_body=CleanBody,
+    params(("id" = String, Path)),
+    responses((status=200, body=ZoneView), (status=404))
+)]
+pub async fn clean_zone(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<CleanBody>,
+) -> AppResult<Json<ZoneView>> {
+    let cleaned_at = body.cleaned_at.unwrap_or_else(chrono::Utc::now);
+    let res = sqlx::query!("UPDATE zones SET last_cleaned_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL", cleaned_at, id)
+        .execute(&state.pool).await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    get_zone(State(state), Path(id)).await
+}
+
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct BulkClean {
+    pub zone_ids: Vec<String>,
+    pub cleaned_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[utoipa::path(post, path="/api/v1/zones/bulk/clean", tag="zones",
+    request_body=BulkClean,
+    responses((status=200, body=serde_json::Value))
+)]
+pub async fn bulk_clean(
+    State(state): State<std::sync::Arc<AppState>>,
+    Json(body): Json<BulkClean>,
+) -> AppResult<Json<serde_json::Value>> {
+    let cleaned_at = body.cleaned_at.unwrap_or_else(chrono::Utc::now);
+    let mut updated = 0u64;
+    for id in body.zone_ids.iter() {
+        let res = sqlx::query!("UPDATE zones SET last_cleaned_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL", cleaned_at, id)
+            .execute(&state.pool).await?;
+        updated += res.rows_affected();
+    }
+    Ok(Json(serde_json::json!({"updated": updated})))
+}
