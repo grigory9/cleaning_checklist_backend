@@ -23,3 +23,8 @@ http://localhost:8080/swagger-ui
 ```bash
 rm -f cleaner.db && touch cleaner.db
 ```
+
+#### Exit app
+```bash
+sudo killall -9 cleaner-api
+```
