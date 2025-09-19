@@ -7,9 +7,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use utoipa::{IntoParams, ToSchema};
 
+use std::sync::Arc;
+
 use crate::{
     error::{AppError, AppResult},
     models::{compute_is_due, compute_next_due, AppState, NewZone, UpdateZone, Zone, ZoneView},
+    api::oauth::AuthenticatedUser,
 };
 
 #[derive(Deserialize, IntoParams)]
@@ -21,13 +24,34 @@ pub struct ListZones {
     get,
     path = "/rooms/{room_id}/zones",
     params(("room_id" = String, Path, description = "Room id"), ListZones),
-    responses((status = 200, description = "List zones", body = [ZoneView]))
+    responses(
+        (status = 200, description = "List zones", body = [ZoneView]),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn list_zones(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(room_id): Path<String>,
     Query(p): Query<ListZones>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<Json<Vec<ZoneView>>> {
+    // Проверяем, что комната принадлежит пользователю
+    let room_exists: (i64,) = sqlx::query_as(
+        "SELECT COUNT(1) FROM rooms WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL"
+    )
+    .bind(&room_id)
+    .bind(&user_id)
+    .fetch_one(&state.pool)
+    .await?;
+    
+    if room_exists.0 == 0 {
+        return Err(AppError::NotFound);
+    }
+
     let mut zones: Vec<Zone> = sqlx::query_as::<_, Zone>(
         r#"SELECT id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at
            FROM zones WHERE room_id = ?1 AND deleted_at IS NULL
@@ -64,10 +88,18 @@ pub async fn list_zones(
     path = "/rooms/{room_id}/zones",
     params(("room_id" = String, Path, description = "Room id")),
     request_body = NewZone,
-    responses((status = 201, description = "Zone created", body = ZoneView))
+    responses(
+        (status = 201, description = "Zone created", body = ZoneView),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn create_zone(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
     Path(room_id): Path<String>,
     Json(body): Json<NewZone>,
 ) -> AppResult<(axum::http::StatusCode, Json<ZoneView>)> {
@@ -81,10 +113,11 @@ pub async fn create_zone(
             "custom_interval_days must be >= 1 for custom frequency".into(),
         ));
     }
-    // проверим, что комната существует и не удалена
+    // проверим, что комната существует, не удалена и принадлежит пользователю
     let exists: (i64,) =
-        sqlx::query_as("SELECT COUNT(1) FROM rooms WHERE id = ?1 AND deleted_at IS NULL")
+        sqlx::query_as("SELECT COUNT(1) FROM rooms WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL")
             .bind(&room_id)
+            .bind(&user_id)
             .fetch_one(&state.pool)
             .await?;
     if exists.0 == 0 {
@@ -134,16 +167,26 @@ pub async fn create_zone(
     get,
     path = "/zones/{id}",
     params(("id" = String, Path, description = "Zone id")),
-    responses((status = 200, description = "Zone details", body = ZoneView))
+    responses(
+        (status = 200, description = "Zone details", body = ZoneView),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn get_zone(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<Json<ZoneView>> {
     let z = sqlx::query_as::<_, Zone>(
-        r#"SELECT id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at
-           FROM zones WHERE id = ?1 AND deleted_at IS NULL"#
-    ).bind(&id).fetch_optional(&state.pool).await?;
+        r#"SELECT z.id, z.room_id, z.name, z.icon, z.frequency, z.custom_interval_days, z.last_cleaned_at, z.created_at, z.updated_at, z.deleted_at
+           FROM zones z
+           JOIN rooms r ON z.room_id = r.id
+           WHERE z.id = ?1 AND z.deleted_at IS NULL AND r.user_id = ?2 AND r.deleted_at IS NULL"#
+    ).bind(&id).bind(&user_id).fetch_optional(&state.pool).await?;
     let z = z.ok_or(AppError::NotFound)?;
     let next_due = compute_next_due(z.last_cleaned_at, &z.frequency, z.custom_interval_days);
     let is_due = compute_is_due(next_due);
@@ -168,16 +211,27 @@ pub async fn get_zone(
     path = "/zones/{id}",
     params(("id" = String, Path, description = "Zone id")),
     request_body = UpdateZone,
-    responses((status = 200, description = "Zone updated", body = ZoneView))
+    responses(
+        (status = 200, description = "Zone updated", body = ZoneView),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn update_zone(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
     Path(id): Path<String>,
     Json(body): Json<UpdateZone>,
 ) -> AppResult<Json<ZoneView>> {
     let z = sqlx::query_as::<_, Zone>(
-        "SELECT id, room_id, name, icon, frequency, custom_interval_days, last_cleaned_at, created_at, updated_at, deleted_at FROM zones WHERE id = ?1 AND deleted_at IS NULL"
-    ).bind(&id).fetch_optional(&state.pool).await?;
+        r#"SELECT z.id, z.room_id, z.name, z.icon, z.frequency, z.custom_interval_days, z.last_cleaned_at, z.created_at, z.updated_at, z.deleted_at
+           FROM zones z
+           JOIN rooms r ON z.room_id = r.id
+           WHERE z.id = ?1 AND z.deleted_at IS NULL AND r.user_id = ?2 AND r.deleted_at IS NULL"#
+    ).bind(&id).bind(&user_id).fetch_optional(&state.pool).await?;
     let mut z = z.ok_or(AppError::NotFound)?;
 
     let now = Utc::now();
@@ -237,18 +291,29 @@ pub async fn update_zone(
     delete,
     path = "/zones/{id}",
     params(("id" = String, Path, description = "Zone id")),
-    responses((status = 204, description = "Zone deleted"))
+    responses(
+        (status = 204, description = "Zone deleted"),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn delete_zone(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<axum::http::StatusCode> {
     let now = Utc::now();
     let res = sqlx::query(
-        "UPDATE zones SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        r#"UPDATE zones SET deleted_at = ?1
+           WHERE id = ?2 AND deleted_at IS NULL
+           AND room_id IN (SELECT id FROM rooms WHERE user_id = ?3 AND deleted_at IS NULL)"#,
     )
     .bind(now)
     .bind(&id)
+    .bind(&user_id)
     .execute(&state.pool)
     .await?;
     if res.rows_affected() == 0 {
@@ -267,23 +332,36 @@ pub struct CleanBody {
     path = "/zones/{id}/clean",
     params(("id" = String, Path, description = "Zone id")),
     request_body = CleanBody,
-    responses((status = 200, description = "Zone cleaned", body = ZoneView))
+    responses(
+        (status = 200, description = "Zone cleaned", body = ZoneView),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn clean_zone(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
     Path(id): Path<String>,
     Json(body): Json<CleanBody>,
 ) -> AppResult<Json<ZoneView>> {
     let cleaned_at = body.cleaned_at.unwrap_or_else(chrono::Utc::now);
-    let res = sqlx::query("UPDATE zones SET last_cleaned_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
+    let res = sqlx::query(
+        r#"UPDATE zones SET last_cleaned_at = ?1, updated_at = ?1
+           WHERE id = ?2 AND deleted_at IS NULL
+           AND room_id IN (SELECT id FROM rooms WHERE user_id = ?3 AND deleted_at IS NULL)"#
+    )
         .bind(cleaned_at)
         .bind(&id)
+        .bind(&user_id)
         .execute(&state.pool)
         .await?;
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
-    get_zone(State(state), Path(id)).await
+    get_zone(State(state), Path(id), AuthenticatedUser(user_id)).await
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -301,21 +379,47 @@ pub struct BulkCleanResponse {
     post,
     path = "/zones/bulk/clean",
     request_body = BulkClean,
-    responses((status = 200, description = "Bulk clean result", body = BulkCleanResponse))
+    responses(
+        (status = 200, description = "Bulk clean result", body = BulkCleanResponse),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn bulk_clean(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
     Json(body): Json<BulkClean>,
 ) -> AppResult<Json<BulkCleanResponse>> {
     let cleaned_at = body.cleaned_at.unwrap_or_else(chrono::Utc::now);
     let mut updated = 0u64;
     for id in body.zone_ids.iter() {
-        let res = sqlx::query("UPDATE zones SET last_cleaned_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
+        let res = sqlx::query(
+            r#"UPDATE zones SET last_cleaned_at = ?1, updated_at = ?1
+               WHERE id = ?2 AND deleted_at IS NULL
+               AND room_id IN (SELECT id FROM rooms WHERE user_id = ?3 AND deleted_at IS NULL)"#
+        )
             .bind(cleaned_at)
             .bind(id)
+            .bind(&user_id)
             .execute(&state.pool)
             .await?;
         updated += res.rows_affected();
     }
     Ok(Json(BulkCleanResponse { updated }))
+}
+
+use axum::{
+    routing::{get, post},
+    Router,
+};
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/rooms/:room_id/zones", get(list_zones).post(create_zone))
+        .route("/zones/:id", get(get_zone).patch(update_zone).delete(delete_zone))
+        .route("/zones/:id/clean", post(clean_zone))
+        .route("/zones/bulk/clean", post(bulk_clean))
 }

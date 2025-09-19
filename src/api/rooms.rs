@@ -8,9 +8,12 @@ use utoipa::IntoParams;
 use uuid::Uuid;
 use sqlx::Row;
 
+use std::sync::Arc;
+
 use crate::{
     error::{AppError, AppResult},
     models::{AppState, NewRoom, Room, RoomView, UpdateRoom},
+    api::oauth::AuthenticatedUser,
 };
 
 #[derive(Deserialize, IntoParams)]
@@ -23,18 +26,27 @@ pub struct ListParams {
     get,
     path = "/rooms",
     params(ListParams),
-    responses((status = 200, description = "List rooms", body = [RoomView]))
+    responses(
+        (status = 200, description = "List rooms", body = [RoomView]),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn list_rooms(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Query(p): Query<ListParams>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<Json<Vec<RoomView>>> {
     let mut rooms: Vec<Room> = sqlx::query_as::<_, Room>(
         r#"SELECT id, name, icon, created_at, updated_at, deleted_at
            FROM rooms
-           WHERE deleted_at IS NULL AND (?1 IS NULL OR name LIKE '%' || ?1 || '%')
+           WHERE user_id = ?1 AND deleted_at IS NULL AND (?2 IS NULL OR name LIKE '%' || ?2 || '%')
            ORDER BY created_at DESC"#,
     )
+    .bind(&user_id)
     .bind(p.q)
     .fetch_all(&state.pool)
     .await?;
@@ -96,10 +108,18 @@ pub async fn list_rooms(
     post,
     path = "/rooms",
     request_body = NewRoom,
-    responses((status = 201, description = "Room created", body = RoomView))
+    responses(
+        (status = 201, description = "Room created", body = RoomView),
+        (status = 401, description = "Unauthorized - Invalid or missing token")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn create_room(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
     Json(body): Json<NewRoom>,
 ) -> AppResult<(axum::http::StatusCode, Json<RoomView>)> {
     if body.name.trim().is_empty() {
@@ -110,10 +130,11 @@ pub async fn create_room(
     let name = body.name;
     let icon = body.icon;
     sqlx::query(
-        r#"INSERT INTO rooms(id, name, icon, created_at, updated_at, deleted_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, NULL)"#,
+        r#"INSERT INTO rooms(id, user_id, name, icon, created_at, updated_at, deleted_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)"#,
     )
     .bind(&id)
+    .bind(&user_id)
     .bind(&name)
     .bind(&icon)
     .bind(now)
@@ -139,17 +160,27 @@ pub async fn create_room(
     get,
     path = "/rooms/{id}",
     params(("id" = String, Path, description = "Room id")),
-    responses((status = 200, description = "Room details", body = RoomView))
+    responses(
+        (status = 200, description = "Room details", body = RoomView),
+        (status = 401, description = "Unauthorized - Invalid or missing token"),
+        (status = 404, description = "Room not found")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn get_room(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<Json<RoomView>> {
     let r = sqlx::query_as::<_, Room>(
         r#"SELECT id, name, icon, created_at, updated_at, deleted_at
-           FROM rooms WHERE id = ?1 AND deleted_at IS NULL"#,
+           FROM rooms WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL"#,
     )
     .bind(&id)
+    .bind(&user_id)
     .fetch_optional(&state.pool)
     .await?;
     let r = r.ok_or(AppError::NotFound)?;
@@ -195,17 +226,26 @@ pub async fn get_room(
     path = "/rooms/{id}",
     params(("id" = String, Path, description = "Room id")),
     request_body = UpdateRoom,
-    responses((status = 200, description = "Room updated", body = RoomView))
+    responses(
+        (status = 200, description = "Room updated", body = RoomView),
+        (status = 401, description = "Unauthorized - Invalid or missing token"),
+        (status = 404, description = "Room not found")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn update_room(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
     Path(id): Path<String>,
     Json(body): Json<UpdateRoom>,
 ) -> AppResult<Json<RoomView>> {
     let now = Utc::now();
     let rec = sqlx::query_as::<_, Room>(
-        "SELECT id, name, icon, created_at, updated_at, deleted_at FROM rooms WHERE id = ?1 AND deleted_at IS NULL"
-    ).bind(&id).fetch_optional(&state.pool).await?;
+        "SELECT id, name, icon, created_at, updated_at, deleted_at FROM rooms WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL"
+    ).bind(&id).bind(&user_id).fetch_optional(&state.pool).await?;
     let mut r = rec.ok_or(AppError::NotFound)?;
 
     let name = body.name.unwrap_or(r.name.clone());
@@ -241,18 +281,28 @@ pub async fn update_room(
     delete,
     path = "/rooms/{id}",
     params(("id" = String, Path, description = "Room id")),
-    responses((status = 204, description = "Room deleted"))
+    responses(
+        (status = 204, description = "Room deleted"),
+        (status = 401, description = "Unauthorized - Invalid or missing token"),
+        (status = 404, description = "Room not found")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn delete_room(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<axum::http::StatusCode> {
     let now = Utc::now();
     let res = sqlx::query(
-        "UPDATE rooms SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        "UPDATE rooms SET deleted_at = ?1 WHERE id = ?2 AND user_id = ?3 AND deleted_at IS NULL",
     )
     .bind(now)
     .bind(&id)
+    .bind(&user_id)
     .execute(&state.pool)
     .await?;
     if res.rows_affected() == 0 {
@@ -273,14 +323,24 @@ pub async fn delete_room(
     post,
     path = "/rooms/{id}/restore",
     params(("id" = String, Path, description = "Room id")),
-    responses((status = 200, description = "Room restored", body = RoomView))
+    responses(
+        (status = 200, description = "Room restored", body = RoomView),
+        (status = 401, description = "Unauthorized - Invalid or missing token"),
+        (status = 404, description = "Room not found")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
 )]
+#[axum::debug_handler]
 pub async fn restore_room(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    AuthenticatedUser(user_id): AuthenticatedUser,
 ) -> AppResult<Json<RoomView>> {
-    let res = sqlx::query("UPDATE rooms SET deleted_at = NULL WHERE id = ?1")
+    let res = sqlx::query("UPDATE rooms SET deleted_at = NULL WHERE id = ?1 AND user_id = ?2")
         .bind(&id)
+        .bind(&user_id)
         .execute(&state.pool)
         .await?;
     if res.rows_affected() == 0 {
@@ -303,4 +363,16 @@ pub async fn restore_room(
         zones_cleaned_count: None,
         last_cleaned_at: None,
     }))
+}
+
+use axum::{
+    routing::{get, patch, post, delete},
+    Router,
+};
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_rooms).post(create_room))
+        .route("/:id", get(get_room).patch(update_room).delete(delete_room))
+        .route("/:id/restore", post(restore_room))
 }

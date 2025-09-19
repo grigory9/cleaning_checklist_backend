@@ -14,12 +14,17 @@ chrono-tz = "0.8"
 sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"] }
 utoipa = { version = "4", features = ["chrono", "uuid"] }
 utoipa-swagger-ui = { version = "6", features = ["axum"] }
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tower-http = { version = "0.4", features = ["trace", "cors"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+tower = "0.5"
 dotenvy = "0.15"
-anyhow = "1.0.99"
+anyhow = "1.0"
+jsonwebtoken = "9"
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+hex = "0.4"
+axum-extra = { version = "0.9", features = ["typed-header"] }
 
 [dev-dependencies]
-tower = "0.5"

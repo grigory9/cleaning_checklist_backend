@@ -17,7 +17,10 @@ async fn test_app() -> Router {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let state = Arc::new(AppState { pool });
+    let state = Arc::new(AppState {
+        pool,
+        jwt_secret: "test-secret".to_string(),
+    });
     let api_routes = Router::new()
         .route("/rooms", get(rooms::list_rooms).post(rooms::create_room))
         .route(

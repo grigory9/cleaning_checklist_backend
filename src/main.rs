@@ -1,7 +1,10 @@
 use std::{env, net::SocketAddr, sync::Arc};
+use rand::Rng;
 
 use axum::{
+    extract::Request,
     routing::{get, post},
+    middleware::{self, Next},
     Router,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,7 +15,7 @@ mod api;
 mod error;
 mod models;
 
-use api::{docs, rooms, stats, zones};
+use api::{docs, api_router};
 use error::{AppError, AppResult};
 
 
@@ -48,39 +51,30 @@ async fn main() -> AppResult<()> {
         .await
         .map_err(|e| AppError::Other(e.into()))?;
 
-    let state = Arc::new(models::AppState { pool });
+    let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| {
+        // Генерируем случайный секрет по умолчанию для разработки
+        let mut rng = rand::thread_rng();
+        let secret: [u8; 32] = rng.gen();
+        hex::encode(secret)
+    });
 
-    let api_routes = Router::new()
-        // Rooms
-        .route("/rooms", get(rooms::list_rooms).post(rooms::create_room))
-        .route(
-            "/rooms/:id",
-            get(rooms::get_room)
-                .patch(rooms::update_room)
-                .delete(rooms::delete_room),
-        )
-        .route("/rooms/:id/restore", post(rooms::restore_room))
-        // Zones
-        .route(
-            "/rooms/:room_id/zones",
-            get(zones::list_zones).post(zones::create_zone),
-        )
-        .route(
-            "/zones/:id",
-            get(zones::get_zone)
-                .patch(zones::update_zone)
-                .delete(zones::delete_zone),
-        )
-        .route("/zones/:id/clean", post(zones::clean_zone))
-        .route("/zones/bulk/clean", post(zones::bulk_clean))
-        // Stats
-        .route("/stats/overview", get(stats::overview))
-        .route("/zones/due", get(stats::zones_due));
+    let state = Arc::new(models::AppState { pool, jwt_secret });
 
     let app = Router::new()
-        .nest("/api/v1", api_routes)
+        .nest("/api/v1", api_router())
         .merge(docs::swagger_ui())
-        .with_state(state);
+        .with_state(state)
+        .layer(middleware::from_fn(|mut req: Request, next: Next| async move {
+            // Добавляем JWT секрет в extensions для использования в simple_auth_middleware
+            let jwt_secret = req.extensions()
+                .get::<Arc<models::AppState>>()
+                .map(|state| state.jwt_secret.clone());
+            
+            if let Some(secret) = jwt_secret {
+                req.extensions_mut().insert(secret);
+            }
+            next.run(req).await
+        }));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!(%addr, "🚀 cleaner-api запущен");
