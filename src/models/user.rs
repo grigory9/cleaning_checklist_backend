@@ -84,3 +84,9 @@ pub struct AuthResponse {
     pub expires_in: i64,
     pub user: UserView,
 }
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RefreshTokenRequest {
+    #[schema(example = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...")]
+    pub refresh_token: String,
+}

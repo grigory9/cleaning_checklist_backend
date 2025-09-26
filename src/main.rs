@@ -66,6 +66,7 @@ async fn main() -> AppResult<()> {
         // Auth & Users
         .route("/register", post(users::register))
         .route("/login", post(users::login))
+        .route("/refresh", post(users::refresh_token))
         .route("/me", get(users::me))
         // Rooms
         .route("/rooms", get(rooms::list_rooms).post(rooms::create_room))
