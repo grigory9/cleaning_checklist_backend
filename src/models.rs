@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 use utoipa::ToSchema;
 
+pub mod oauth_client;
+pub mod token;
+pub mod user;
+
+pub use oauth_client::*;
+pub use token::*;
+pub use user::*;
+
 pub type Db = SqlitePool;
 
 #[derive(Clone)]
@@ -47,6 +55,7 @@ pub struct Room {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
+    pub user_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]

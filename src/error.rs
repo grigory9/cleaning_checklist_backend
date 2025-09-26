@@ -11,6 +11,16 @@ pub enum AppError {
     NotFound,
     #[error("validation error: {0}")]
     Validation(String),
+    #[error("bad request: {0}")]
+    BadRequest(String),
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+    #[error("conflict: {0}")]
+    Conflict(String),
+    #[error("not implemented: {0}")]
+    NotImplemented(String),
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
@@ -32,6 +42,11 @@ impl IntoResponse for AppError {
         let (status, code) = match self {
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
+            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
+            AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             AppError::Sqlx(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
             AppError::AxumJsonRejection(_) => (StatusCode::BAD_REQUEST, "invalid_json"),
             AppError::Other(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),

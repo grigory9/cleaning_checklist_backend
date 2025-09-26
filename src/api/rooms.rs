@@ -9,8 +9,10 @@ use uuid::Uuid;
 use sqlx::Row;
 
 use crate::{
+    auth::{middleware::AuthUser, scopes::Scope},
     error::{AppError, AppResult},
     models::{AppState, NewRoom, Room, RoomView, UpdateRoom},
+    require_scope,
 };
 
 #[derive(Deserialize, IntoParams)]
@@ -23,18 +25,23 @@ pub struct ListParams {
     get,
     path = "/rooms",
     params(ListParams),
-    responses((status = 200, description = "List rooms", body = [RoomView]))
+    responses((status = 200, description = "List rooms", body = [RoomView])),
+    security(("bearer_auth" = ["rooms:read"]))
 )]
 pub async fn list_rooms(
+    auth_user: AuthUser,
     State(state): State<std::sync::Arc<AppState>>,
     Query(p): Query<ListParams>,
 ) -> AppResult<Json<Vec<RoomView>>> {
+    require_scope!(&auth_user, &Scope::RoomsRead);
+
     let mut rooms: Vec<Room> = sqlx::query_as::<_, Room>(
-        r#"SELECT id, name, icon, created_at, updated_at, deleted_at
+        r#"SELECT id, name, icon, created_at, updated_at, deleted_at, user_id
            FROM rooms
-           WHERE deleted_at IS NULL AND (?1 IS NULL OR name LIKE '%' || ?1 || '%')
+           WHERE deleted_at IS NULL AND user_id = ?1 AND (?2 IS NULL OR name LIKE '%' || ?2 || '%')
            ORDER BY created_at DESC"#,
     )
+    .bind(&auth_user.user.id)
     .bind(p.q)
     .fetch_all(&state.pool)
     .await?;
@@ -96,12 +103,16 @@ pub async fn list_rooms(
     post,
     path = "/rooms",
     request_body = NewRoom,
-    responses((status = 201, description = "Room created", body = RoomView))
+    responses((status = 201, description = "Room created", body = RoomView)),
+    security(("bearer_auth" = ["rooms:write"]))
 )]
 pub async fn create_room(
+    auth_user: AuthUser,
     State(state): State<std::sync::Arc<AppState>>,
     Json(body): Json<NewRoom>,
 ) -> AppResult<(axum::http::StatusCode, Json<RoomView>)> {
+    require_scope!(&auth_user, &Scope::RoomsWrite);
+
     if body.name.trim().is_empty() {
         return Err(AppError::Validation("name is required".into()));
     }
@@ -110,14 +121,15 @@ pub async fn create_room(
     let name = body.name;
     let icon = body.icon;
     sqlx::query(
-        r#"INSERT INTO rooms(id, name, icon, created_at, updated_at, deleted_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, NULL)"#,
+        r#"INSERT INTO rooms(id, name, icon, created_at, updated_at, deleted_at, user_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)"#,
     )
     .bind(&id)
     .bind(&name)
     .bind(&icon)
     .bind(now)
     .bind(now)
+    .bind(&auth_user.user.id)
     .execute(&state.pool)
     .await?;
 
@@ -139,17 +151,22 @@ pub async fn create_room(
     get,
     path = "/rooms/{id}",
     params(("id" = String, Path, description = "Room id")),
-    responses((status = 200, description = "Room details", body = RoomView))
+    responses((status = 200, description = "Room details", body = RoomView)),
+    security(("bearer_auth" = ["rooms:read"]))
 )]
 pub async fn get_room(
+    auth_user: AuthUser,
     State(state): State<std::sync::Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<Json<RoomView>> {
+    require_scope!(&auth_user, &Scope::RoomsRead);
+
     let r = sqlx::query_as::<_, Room>(
-        r#"SELECT id, name, icon, created_at, updated_at, deleted_at
-           FROM rooms WHERE id = ?1 AND deleted_at IS NULL"#,
+        r#"SELECT id, name, icon, created_at, updated_at, deleted_at, user_id
+           FROM rooms WHERE id = ?1 AND deleted_at IS NULL AND user_id = ?2"#,
     )
     .bind(&id)
+    .bind(&auth_user.user.id)
     .fetch_optional(&state.pool)
     .await?;
     let r = r.ok_or(AppError::NotFound)?;
@@ -195,29 +212,34 @@ pub async fn get_room(
     path = "/rooms/{id}",
     params(("id" = String, Path, description = "Room id")),
     request_body = UpdateRoom,
-    responses((status = 200, description = "Room updated", body = RoomView))
+    responses((status = 200, description = "Room updated", body = RoomView)),
+    security(("bearer_auth" = ["rooms:write"]))
 )]
 pub async fn update_room(
+    auth_user: AuthUser,
     State(state): State<std::sync::Arc<AppState>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateRoom>,
 ) -> AppResult<Json<RoomView>> {
+    require_scope!(&auth_user, &Scope::RoomsWrite);
+
     let now = Utc::now();
     let rec = sqlx::query_as::<_, Room>(
-        "SELECT id, name, icon, created_at, updated_at, deleted_at FROM rooms WHERE id = ?1 AND deleted_at IS NULL"
-    ).bind(&id).fetch_optional(&state.pool).await?;
+        "SELECT id, name, icon, created_at, updated_at, deleted_at, user_id FROM rooms WHERE id = ?1 AND deleted_at IS NULL AND user_id = ?2"
+    ).bind(&id).bind(&auth_user.user.id).fetch_optional(&state.pool).await?;
     let mut r = rec.ok_or(AppError::NotFound)?;
 
     let name = body.name.unwrap_or(r.name.clone());
     let icon = body.icon.or(r.icon.clone());
 
     sqlx::query(
-        "UPDATE rooms SET name = ?1, icon = ?2, updated_at = ?3 WHERE id = ?4",
+        "UPDATE rooms SET name = ?1, icon = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5",
     )
     .bind(&name)
     .bind(&icon)
     .bind(now)
     .bind(&id)
+    .bind(&auth_user.user.id)
     .execute(&state.pool)
     .await?;
 
@@ -241,24 +263,29 @@ pub async fn update_room(
     delete,
     path = "/rooms/{id}",
     params(("id" = String, Path, description = "Room id")),
-    responses((status = 204, description = "Room deleted"))
+    responses((status = 204, description = "Room deleted")),
+    security(("bearer_auth" = ["rooms:write"]))
 )]
 pub async fn delete_room(
+    auth_user: AuthUser,
     State(state): State<std::sync::Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<axum::http::StatusCode> {
+    require_scope!(&auth_user, &Scope::RoomsWrite);
+
     let now = Utc::now();
     let res = sqlx::query(
-        "UPDATE rooms SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        "UPDATE rooms SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL AND user_id = ?3",
     )
     .bind(now)
     .bind(&id)
+    .bind(&auth_user.user.id)
     .execute(&state.pool)
     .await?;
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
-    // мягко скрываем зоны
+    // мягко скрываем зоны для этого пользователя
     sqlx::query(
         "UPDATE zones SET deleted_at = ?1 WHERE room_id = ?2 AND deleted_at IS NULL",
     )
@@ -273,21 +300,26 @@ pub async fn delete_room(
     post,
     path = "/rooms/{id}/restore",
     params(("id" = String, Path, description = "Room id")),
-    responses((status = 200, description = "Room restored", body = RoomView))
+    responses((status = 200, description = "Room restored", body = RoomView)),
+    security(("bearer_auth" = ["rooms:write"]))
 )]
 pub async fn restore_room(
+    auth_user: AuthUser,
     State(state): State<std::sync::Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<Json<RoomView>> {
-    let res = sqlx::query("UPDATE rooms SET deleted_at = NULL WHERE id = ?1")
+    require_scope!(&auth_user, &Scope::RoomsWrite);
+
+    let res = sqlx::query("UPDATE rooms SET deleted_at = NULL WHERE id = ?1 AND user_id = ?2")
         .bind(&id)
+        .bind(&auth_user.user.id)
         .execute(&state.pool)
         .await?;
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
     let r = sqlx::query_as::<_, Room>(
-        "SELECT id, name, icon, created_at, updated_at, deleted_at FROM rooms WHERE id = ?1",
+        "SELECT id, name, icon, created_at, updated_at, deleted_at, user_id FROM rooms WHERE id = ?1",
     )
     .bind(&id)
     .fetch_one(&state.pool)

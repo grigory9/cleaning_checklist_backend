@@ -20,6 +20,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http = { version = "0.4", features = ["trace", "cors"] }
 dotenvy = "0.15"
 anyhow = "1.0.99"
+# Authentication and security
+argon2 = "0.5"
+jsonwebtoken = "9"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2.5"
+# Session management
+tower-sessions = "0.12"
+# Form handling for OAuth flows
+axum-extra = { version = "0.9", features = ["form"] }
 
 [dev-dependencies]
 tower = "0.5"

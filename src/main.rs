@@ -1,6 +1,7 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::{
+    extract::State,
     routing::{get, post},
     Router,
 };
@@ -9,10 +10,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use sqlx::sqlite::SqlitePoolOptions;
 
 mod api;
+mod auth;
 mod error;
 mod models;
 
-use api::{docs, rooms, stats, zones};
+use api::{admin, docs, rooms, stats, users, zones};
+use auth::oauth::{authorize, introspect, revoke, token};
 use error::{AppError, AppResult};
 
 
@@ -50,7 +53,20 @@ async fn main() -> AppResult<()> {
 
     let state = Arc::new(models::AppState { pool });
 
+    let oauth_routes = Router::new()
+        .route("/authorize", get(authorize::authorize_get).post(authorize::authorize_post))
+        .route("/token", post(token::token))
+        .route("/introspect", post(introspect::introspect))
+        .route("/revoke", post(revoke::revoke));
+
+    let admin_routes = Router::new()
+        .route("/clients", post(admin::create_client).get(admin::list_clients));
+
     let api_routes = Router::new()
+        // Auth & Users
+        .route("/register", post(users::register))
+        .route("/login", post(users::login))
+        .route("/me", get(users::me))
         // Rooms
         .route("/rooms", get(rooms::list_rooms).post(rooms::create_room))
         .route(
@@ -79,7 +95,18 @@ async fn main() -> AppResult<()> {
 
     let app = Router::new()
         .nest("/api/v1", api_routes)
+        .nest("/oauth", oauth_routes)
+        .nest("/admin", admin_routes)
         .merge(docs::swagger_ui())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            |State(state): State<Arc<models::AppState>>, req: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
+                let (mut parts, body) = req.into_parts();
+                parts.extensions.insert(state);
+                let req = axum::http::Request::from_parts(parts, body);
+                next.run(req).await
+            }
+        ))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));

@@ -1,7 +1,9 @@
-pub mod rooms;
-pub mod zones;
-pub mod stats;
+pub mod admin;
 pub mod docs;
+pub mod rooms;
+pub mod stats;
+pub mod users;
+pub mod zones;
 
 #[cfg(test)]
 mod tests {
