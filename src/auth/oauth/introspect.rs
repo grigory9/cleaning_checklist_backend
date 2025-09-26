@@ -22,7 +22,8 @@ use crate::{
     request_body = IntrospectRequest,
     responses(
         (status = 200, description = "Token introspection response", body = IntrospectResponse),
-    )
+    ),
+    tag = "oauth"
 )]
 pub async fn introspect(
     State(state): State<Arc<AppState>>,

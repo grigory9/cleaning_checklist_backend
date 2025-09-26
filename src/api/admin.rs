@@ -4,6 +4,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,7 +17,7 @@ use crate::{
     models::{AppState, OAuthClient, OAuthClientCredentials},
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateClientRequest {
     pub name: String,
     pub redirect_uris: Vec<String>,
@@ -26,6 +27,13 @@ pub struct CreateClientRequest {
 }
 
 // POST /admin/clients - Create OAuth client
+#[utoipa::path(
+    post,
+    path = "/admin/clients",
+    request_body = CreateClientRequest,
+    responses((status = 200, description = "OAuth client created", body = OAuthClientCredentials)),
+    tag = "admin"
+)]
 pub async fn create_client(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateClientRequest>,
@@ -81,6 +89,12 @@ pub async fn create_client(
 }
 
 // GET /admin/clients - List OAuth clients
+#[utoipa::path(
+    get,
+    path = "/admin/clients",
+    responses((status = 200, description = "List of OAuth clients", body = [OAuthClient])),
+    tag = "admin"
+)]
 pub async fn list_clients(
     State(state): State<Arc<AppState>>,
 ) -> AppResult<Json<Vec<OAuthClient>>> {

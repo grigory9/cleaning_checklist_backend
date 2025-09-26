@@ -5,6 +5,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::Deserialize;
+use utoipa::ToSchema;
 use std::sync::Arc;
 use utoipa::IntoParams;
 
@@ -25,7 +26,7 @@ pub struct AuthorizeParams {
     pub code_challenge_method: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ConsentForm {
     pub user_id: String,
     pub client_id: String,
@@ -45,7 +46,8 @@ pub struct ConsentForm {
     responses(
         (status = 200, description = "Authorization form", content_type = "text/html"),
         (status = 302, description = "Redirect with error"),
-    )
+    ),
+    tag = "oauth"
 )]
 pub async fn authorize_get(
     State(state): State<Arc<AppState>>,
@@ -114,7 +116,8 @@ pub async fn authorize_get(
     request_body = ConsentForm,
     responses(
         (status = 302, description = "Redirect with authorization code or error"),
-    )
+    ),
+    tag = "oauth"
 )]
 pub async fn authorize_post(
     State(state): State<Arc<AppState>>,

@@ -15,7 +15,8 @@ use crate::{
     post,
     path = "/register",
     request_body = RegisterUser,
-    responses((status = 201, description = "User registered successfully", body = UserView))
+    responses((status = 201, description = "User registered successfully", body = UserView)),
+    tag = "auth"
 )]
 pub async fn register(
     State(state): State<std::sync::Arc<AppState>>,
@@ -78,7 +79,8 @@ pub async fn register(
     post,
     path = "/login",
     request_body = LoginUser,
-    responses((status = 200, description = "Login successful", body = UserView))
+    responses((status = 200, description = "Login successful", body = UserView)),
+    tag = "auth"
 )]
 pub async fn login(
     State(state): State<std::sync::Arc<AppState>>,
@@ -109,7 +111,8 @@ pub async fn login(
     get,
     path = "/me",
     responses((status = 200, description = "Current user info", body = UserView)),
-    security(("bearer_auth" = []))
+    security(("bearer_auth" = [])),
+    tag = "auth"
 )]
 pub async fn me(
     auth_user: crate::auth::middleware::AuthUser,

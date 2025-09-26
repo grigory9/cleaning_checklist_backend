@@ -20,7 +20,8 @@ use crate::{
     responses(
         (status = 200, description = "Token revoked successfully"),
         (status = 400, description = "Invalid token"),
-    )
+    ),
+    tag = "oauth"
 )]
 pub async fn revoke(
     State(state): State<Arc<AppState>>,

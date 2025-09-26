@@ -5,6 +5,7 @@ use axum::{
 use axum_extra::extract::Form;
 use chrono::{Duration, Utc};
 use serde::Deserialize;
+use utoipa::ToSchema;
 use std::sync::Arc;
 
 use crate::{
@@ -17,7 +18,7 @@ use crate::{
     models::{AppState, AuthorizationCode, OAuthClient, TokenResponse, RefreshToken},
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TokenRequest {
     pub grant_type: String,
     pub client_id: String,
@@ -40,7 +41,8 @@ pub struct TokenRequest {
     responses(
         (status = 200, description = "Token response", body = TokenResponse),
         (status = 400, description = "Token error", body = TokenErrorResponse),
-    )
+    ),
+    tag = "oauth"
 )]
 pub async fn token(
     State(state): State<Arc<AppState>>,
