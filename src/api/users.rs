@@ -89,8 +89,11 @@ pub async fn register(
     let token_generator = TokenGenerator::new()
         .map_err(|e| AppError::Other(anyhow::anyhow!("Token generator initialization failed: {}", e)))?;
 
+    // Use client_id from request or fall back to default
+    let client_id = payload.client_id.as_deref().unwrap_or("2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa");
+
     let (access_token, access_jti) = token_generator
-        .generate_access_token(Some(&user.id), "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa", &scopes, 60 * 24) // 24 hour token
+        .generate_access_token(Some(&user.id), client_id, &scopes, 60 * 24) // 24 hour token
         .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
 
     let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
@@ -102,7 +105,7 @@ pub async fn register(
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
     )
     .bind(hash_token(&access_jti))
-    .bind("2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa")
+    .bind(client_id)
     .bind(&user.id)
     .bind(scopes.to_json_array().to_string())
     .bind(&access_expires_at)
@@ -160,8 +163,11 @@ pub async fn login(
     let token_generator = TokenGenerator::new()
         .map_err(|e| AppError::Other(anyhow::anyhow!("Token generator initialization failed: {}", e)))?;
 
+    // Use default client_id for login since login doesn't specify a client
+    let client_id = "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa";
+
     let (access_token, access_jti) = token_generator
-        .generate_access_token(Some(&user.id), "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa", &scopes, 60 * 24) // 24 hour token
+        .generate_access_token(Some(&user.id), client_id, &scopes, 60 * 24) // 24 hour token
         .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
 
     let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
@@ -173,7 +179,7 @@ pub async fn login(
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
     )
     .bind(hash_token(&access_jti))
-    .bind("2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa")
+    .bind(client_id)
     .bind(&user.id)
     .bind(scopes.to_json_array().to_string())
     .bind(&access_expires_at)

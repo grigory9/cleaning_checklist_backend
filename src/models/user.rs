@@ -51,6 +51,8 @@ pub struct RegisterUser {
     pub password: String,
     #[schema(example = "John Doe")]
     pub name: Option<String>,
+    #[schema(example = "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa")]
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
