@@ -6,22 +6,27 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::{
-    auth::password::{hash_password, verify_password},
+    auth::{
+        password::{hash_password, verify_password},
+        scopes::{Scope, ScopeSet},
+        tokens::{hash_token, TokenGenerator},
+    },
     error::{AppError, AppResult},
-    models::{AppState, LoginUser, RegisterUser, User, UserView},
+    models::{AppState, AuthResponse, LoginUser, RegisterUser, User, UserView},
 };
+use chrono::Duration;
 
 #[utoipa::path(
     post,
     path = "/register",
     request_body = RegisterUser,
-    responses((status = 201, description = "User registered successfully", body = UserView)),
+    responses((status = 201, description = "User registered successfully", body = AuthResponse)),
     tag = "auth"
 )]
 pub async fn register(
     State(state): State<std::sync::Arc<AppState>>,
     Json(payload): Json<RegisterUser>,
-) -> AppResult<Json<UserView>> {
+) -> AppResult<Json<AuthResponse>> {
     // Validate input
     if payload.email.trim().is_empty() {
         return Err(AppError::BadRequest("Email is required".to_string()));
@@ -72,20 +77,59 @@ pub async fn register(
     .fetch_one(&state.pool)
     .await?;
 
-    Ok(Json(user.into()))
+    // Generate JWT token for the new user
+    let scopes = ScopeSet::from_vec(vec![
+        Scope::RoomsRead,
+        Scope::RoomsWrite,
+        Scope::ZonesRead,
+        Scope::ZonesWrite,
+        Scope::StatsRead,
+    ]);
+
+    let token_generator = TokenGenerator::new()
+        .map_err(|e| AppError::Other(anyhow::anyhow!("Token generator initialization failed: {}", e)))?;
+
+    let (access_token, access_jti) = token_generator
+        .generate_access_token(Some(&user.id), "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa", &scopes, 60 * 24) // 24 hour token
+        .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
+
+    let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
+
+    // Store access token in database
+    sqlx::query(
+        r#"INSERT INTO access_tokens
+           (token_hash, client_id, user_id, scopes, expires_at, created_at, revoked)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+    )
+    .bind(hash_token(&access_jti))
+    .bind("2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa")
+    .bind(&user.id)
+    .bind(scopes.to_json_array().to_string())
+    .bind(&access_expires_at)
+    .bind(&Utc::now())
+    .bind(false)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(AuthResponse {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: 60 * 60 * 24, // 24 hours in seconds
+        user: user.into(),
+    }))
 }
 
 #[utoipa::path(
     post,
     path = "/login",
     request_body = LoginUser,
-    responses((status = 200, description = "Login successful", body = UserView)),
+    responses((status = 200, description = "Login successful", body = AuthResponse)),
     tag = "auth"
 )]
 pub async fn login(
     State(state): State<std::sync::Arc<AppState>>,
     Json(payload): Json<LoginUser>,
-) -> AppResult<Json<UserView>> {
+) -> AppResult<Json<AuthResponse>> {
     // Find user by email
     let user = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE email = ?1"
@@ -104,7 +148,46 @@ pub async fn login(
         return Err(AppError::Unauthorized("Invalid credentials".to_string()));
     }
 
-    Ok(Json(user.into()))
+    // Generate JWT token for the authenticated user
+    let scopes = ScopeSet::from_vec(vec![
+        Scope::RoomsRead,
+        Scope::RoomsWrite,
+        Scope::ZonesRead,
+        Scope::ZonesWrite,
+        Scope::StatsRead,
+    ]);
+
+    let token_generator = TokenGenerator::new()
+        .map_err(|e| AppError::Other(anyhow::anyhow!("Token generator initialization failed: {}", e)))?;
+
+    let (access_token, access_jti) = token_generator
+        .generate_access_token(Some(&user.id), "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa", &scopes, 60 * 24) // 24 hour token
+        .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
+
+    let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
+
+    // Store access token in database
+    sqlx::query(
+        r#"INSERT INTO access_tokens
+           (token_hash, client_id, user_id, scopes, expires_at, created_at, revoked)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+    )
+    .bind(hash_token(&access_jti))
+    .bind("2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa")
+    .bind(&user.id)
+    .bind(scopes.to_json_array().to_string())
+    .bind(&access_expires_at)
+    .bind(&Utc::now())
+    .bind(false)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(AuthResponse {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: 60 * 60 * 24, // 24 hours in seconds
+        user: user.into(),
+    }))
 }
 
 #[utoipa::path(

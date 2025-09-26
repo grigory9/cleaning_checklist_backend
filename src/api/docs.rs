@@ -15,7 +15,7 @@ use super::{
 use crate::{
     auth::oauth::{authorize, introspect, revoke, token},
     models::{
-        Frequency, IntrospectRequest, IntrospectResponse, LoginUser, NewRoom, NewZone,
+        AuthResponse, Frequency, IntrospectRequest, IntrospectResponse, LoginUser, NewRoom, NewZone,
         OAuthClient, OAuthClientCredentials, RegisterUser, RevokeRequest, Room, RoomView,
         TokenResponse, UpdateRoom, UpdateZone, User, UserView, Zone, ZoneView,
     },
@@ -86,6 +86,7 @@ impl Modify for SecurityAddon {
         UserView,
         RegisterUser,
         LoginUser,
+        AuthResponse,
         // OAuth Models
         OAuthClient,
         OAuthClientCredentials,

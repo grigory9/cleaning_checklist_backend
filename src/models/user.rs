@@ -73,3 +73,11 @@ pub struct ChangePassword {
     pub current_password: String,
     pub new_password: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AuthResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: i64,
+    pub user: UserView,
+}
