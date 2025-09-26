@@ -16,7 +16,7 @@ use crate::{
     auth::oauth::{authorize, introspect, revoke, token},
     models::{
         AuthResponse, Frequency, IntrospectRequest, IntrospectResponse, LoginUser, NewRoom, NewZone,
-        OAuthClient, OAuthClientCredentials, RegisterUser, RevokeRequest, Room, RoomView,
+        OAuthClient, OAuthClientCredentials, RefreshTokenRequest, RegisterUser, RevokeRequest, Room, RoomView,
         TokenResponse, UpdateRoom, UpdateZone, User, UserView, Zone, ZoneView,
     },
 };
@@ -51,6 +51,7 @@ impl Modify for SecurityAddon {
         // User Management
         users::register,
         users::login,
+        users::refresh_token,
         users::me,
         // OAuth2.0 Endpoints
         authorize::authorize_get,
@@ -86,6 +87,7 @@ impl Modify for SecurityAddon {
         UserView,
         RegisterUser,
         LoginUser,
+        RefreshTokenRequest,
         AuthResponse,
         // OAuth Models
         OAuthClient,
