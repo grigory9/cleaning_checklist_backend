@@ -96,7 +96,12 @@ pub async fn register(
         .generate_access_token(Some(&user.id), client_id, &scopes, 60 * 24) // 24 hour token
         .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
 
+    let (refresh_token, refresh_jti) = token_generator
+        .generate_refresh_token(Some(&user.id), client_id, &scopes, 60 * 24 * 30) // 30 day token
+        .map_err(|e| AppError::Other(anyhow::anyhow!("Refresh token generation failed: {}", e)))?;
+
     let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
+    let refresh_expires_at = Utc::now() + Duration::minutes(60 * 24 * 30); // 30 days
 
     // Store access token in database
     sqlx::query(
@@ -114,8 +119,25 @@ pub async fn register(
     .execute(&state.pool)
     .await?;
 
+    // Store refresh token in database
+    sqlx::query(
+        r#"INSERT INTO refresh_tokens
+           (token_hash, client_id, user_id, scopes, expires_at, created_at, revoked)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+    )
+    .bind(hash_token(&refresh_jti))
+    .bind(client_id)
+    .bind(&user.id)
+    .bind(scopes.to_json_array().to_string())
+    .bind(&refresh_expires_at)
+    .bind(&Utc::now())
+    .bind(false)
+    .execute(&state.pool)
+    .await?;
+
     Ok(Json(AuthResponse {
         access_token,
+        refresh_token,
         token_type: "Bearer".to_string(),
         expires_in: 60 * 60 * 24, // 24 hours in seconds
         user: user.into(),
@@ -170,7 +192,12 @@ pub async fn login(
         .generate_access_token(Some(&user.id), client_id, &scopes, 60 * 24) // 24 hour token
         .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
 
+    let (refresh_token, refresh_jti) = token_generator
+        .generate_refresh_token(Some(&user.id), client_id, &scopes, 60 * 24 * 30) // 30 day token
+        .map_err(|e| AppError::Other(anyhow::anyhow!("Refresh token generation failed: {}", e)))?;
+
     let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
+    let refresh_expires_at = Utc::now() + Duration::minutes(60 * 24 * 30); // 30 days
 
     // Store access token in database
     sqlx::query(
@@ -188,8 +215,25 @@ pub async fn login(
     .execute(&state.pool)
     .await?;
 
+    // Store refresh token in database
+    sqlx::query(
+        r#"INSERT INTO refresh_tokens
+           (token_hash, client_id, user_id, scopes, expires_at, created_at, revoked)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+    )
+    .bind(hash_token(&refresh_jti))
+    .bind(client_id)
+    .bind(&user.id)
+    .bind(scopes.to_json_array().to_string())
+    .bind(&refresh_expires_at)
+    .bind(&Utc::now())
+    .bind(false)
+    .execute(&state.pool)
+    .await?;
+
     Ok(Json(AuthResponse {
         access_token,
+        refresh_token,
         token_type: "Bearer".to_string(),
         expires_in: 60 * 60 * 24, // 24 hours in seconds
         user: user.into(),
