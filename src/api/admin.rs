@@ -19,6 +19,7 @@ use crate::{
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateClientRequest {
+    pub client_id: Option<String>,
     pub name: String,
     pub redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
@@ -38,7 +39,7 @@ pub async fn create_client(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateClientRequest>,
 ) -> AppResult<Json<OAuthClientCredentials>> {
-    let client_id = Uuid::new_v4().to_string();
+    let client_id = req.client_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let client_secret = generate_client_secret();
     let is_public = req.is_public.unwrap_or(false);
 
