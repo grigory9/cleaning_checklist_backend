@@ -185,8 +185,8 @@ pub async fn login(
     let token_generator = TokenGenerator::new()
         .map_err(|e| AppError::Other(anyhow::anyhow!("Token generator initialization failed: {}", e)))?;
 
-    // Use default client_id for login since login doesn't specify a client
-    let client_id = "2ab18a2b-bb0a-4485-ac3a-7ac6d93ab2fa";
+    // Use 'ios' client_id since it exists in the database
+    let client_id = "ios";
 
     let (access_token, access_jti) = token_generator
         .generate_access_token(Some(&user.id), client_id, &scopes, 60 * 24) // 24 hour token
