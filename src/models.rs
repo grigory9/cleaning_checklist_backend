@@ -55,7 +55,7 @@ pub struct Room {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
-    pub user_id: Option<String>,
+    pub user_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]

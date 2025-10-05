@@ -17,7 +17,6 @@ use crate::{
 
 #[derive(Deserialize, IntoParams)]
 pub struct ListParams {
-    pub with_stats: Option<bool>,
     pub q: Option<String>,
 }
 
@@ -46,55 +45,41 @@ pub async fn list_rooms(
     .fetch_all(&state.pool)
     .await?;
 
-    let with_stats = p.with_stats.unwrap_or(false);
     let mut out: Vec<RoomView> = Vec::with_capacity(rooms.len());
     for r in rooms.drain(..) {
-        if with_stats {
-            let rec = sqlx::query(
-                r#"SELECT COUNT(*) as zones_total,
-                          MAX(last_cleaned_at) as last_cleaned_at
-                   FROM zones WHERE room_id = ?1 AND deleted_at IS NULL"#,
-            )
-            .bind(&r.id)
-            .fetch_one(&state.pool)
-            .await?;
-            let zones_total: i64 = rec.try_get::<i64, _>("zones_total").unwrap_or(0);
-            let last_cleaned_at: Option<chrono::DateTime<Utc>> = rec.try_get("last_cleaned_at").ok();
-            let rec = sqlx::query(
-                r#"SELECT COUNT(*) as cnt
-                   FROM zones
-                   WHERE room_id = ?1 AND deleted_at IS NULL
-                     AND (last_cleaned_at IS NOT NULL)"#,
-            )
-            .bind(&r.id)
-            .fetch_one(&state.pool)
-            .await?;
-            let cleaned_count: i64 = rec.try_get::<i64, _>("cnt").unwrap_or(0);
+        // Always include zone statistics
+        let rec = sqlx::query(
+            r#"SELECT COUNT(*) as zones_total,
+                      MAX(last_cleaned_at) as last_cleaned_at
+               FROM zones WHERE room_id = ?1 AND deleted_at IS NULL"#,
+        )
+        .bind(&r.id)
+        .fetch_one(&state.pool)
+        .await?;
+        let zones_total: i64 = rec.try_get::<i64, _>("zones_total").unwrap_or(0);
+        let last_cleaned_at: Option<chrono::DateTime<Utc>> = rec.try_get("last_cleaned_at").ok();
+        let rec = sqlx::query(
+            r#"SELECT COUNT(*) as cnt
+               FROM zones
+               WHERE room_id = ?1 AND deleted_at IS NULL
+                 AND (last_cleaned_at IS NOT NULL)"#,
+        )
+        .bind(&r.id)
+        .fetch_one(&state.pool)
+        .await?;
+        let cleaned_count: i64 = rec.try_get::<i64, _>("cnt").unwrap_or(0);
 
-            out.push(RoomView {
-                id: r.id,
-                name: r.name,
-                icon: r.icon,
-                created_at: r.created_at,
-                updated_at: r.updated_at,
-                deleted_at: r.deleted_at,
-                zones_total: Some(zones_total),
-                zones_cleaned_count: Some(cleaned_count),
-                last_cleaned_at,
-            });
-        } else {
-            out.push(RoomView {
-                id: r.id,
-                name: r.name,
-                icon: r.icon,
-                created_at: r.created_at,
-                updated_at: r.updated_at,
-                deleted_at: r.deleted_at,
-                zones_total: None,
-                zones_cleaned_count: None,
-                last_cleaned_at: None,
-            });
-        }
+        out.push(RoomView {
+            id: r.id,
+            name: r.name,
+            icon: r.icon,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            deleted_at: r.deleted_at,
+            zones_total: Some(zones_total),
+            zones_cleaned_count: Some(cleaned_count),
+            last_cleaned_at,
+        });
     }
     Ok(Json(out))
 }
@@ -246,6 +231,31 @@ pub async fn update_room(
     r.name = name.clone();
     r.icon = icon.clone();
     r.updated_at = now;
+
+    // Fetch zone statistics for the updated room
+    let stats = sqlx::query(
+        r#"SELECT COUNT(*) as zones_total,
+                  MAX(last_cleaned_at) as last_cleaned_at
+           FROM zones
+           WHERE room_id = ?1 AND deleted_at IS NULL"#,
+    )
+    .bind(&r.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let zones_total: i64 = stats.try_get("zones_total").unwrap_or(0);
+    let last_cleaned_at: Option<chrono::DateTime<Utc>> =
+        stats.try_get("last_cleaned_at").ok();
+
+    let cleaned = sqlx::query(
+        r#"SELECT COUNT(*) as cnt
+           FROM zones
+           WHERE room_id = ?1 AND deleted_at IS NULL AND last_cleaned_at IS NOT NULL"#,
+    )
+    .bind(&r.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let zones_cleaned_count: i64 = cleaned.try_get("cnt").unwrap_or(0);
+
     Ok(Json(RoomView {
         id: r.id,
         name: r.name,
@@ -253,9 +263,9 @@ pub async fn update_room(
         created_at: r.created_at,
         updated_at: r.updated_at,
         deleted_at: r.deleted_at,
-        zones_total: None,
-        zones_cleaned_count: None,
-        last_cleaned_at: None,
+        zones_total: Some(zones_total),
+        zones_cleaned_count: Some(zones_cleaned_count),
+        last_cleaned_at,
     }))
 }
 
@@ -324,6 +334,31 @@ pub async fn restore_room(
     .bind(&id)
     .fetch_one(&state.pool)
     .await?;
+
+    // Fetch zone statistics for the restored room
+    let stats = sqlx::query(
+        r#"SELECT COUNT(*) as zones_total,
+                  MAX(last_cleaned_at) as last_cleaned_at
+           FROM zones
+           WHERE room_id = ?1 AND deleted_at IS NULL"#,
+    )
+    .bind(&r.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let zones_total: i64 = stats.try_get("zones_total").unwrap_or(0);
+    let last_cleaned_at: Option<chrono::DateTime<Utc>> =
+        stats.try_get("last_cleaned_at").ok();
+
+    let cleaned = sqlx::query(
+        r#"SELECT COUNT(*) as cnt
+           FROM zones
+           WHERE room_id = ?1 AND deleted_at IS NULL AND last_cleaned_at IS NOT NULL"#,
+    )
+    .bind(&r.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let zones_cleaned_count: i64 = cleaned.try_get("cnt").unwrap_or(0);
+
     Ok(Json(RoomView {
         id: r.id,
         name: r.name,
@@ -331,8 +366,8 @@ pub async fn restore_room(
         created_at: r.created_at,
         updated_at: r.updated_at,
         deleted_at: r.deleted_at,
-        zones_total: None,
-        zones_cleaned_count: None,
-        last_cleaned_at: None,
+        zones_total: Some(zones_total),
+        zones_cleaned_count: Some(zones_cleaned_count),
+        last_cleaned_at,
     }))
 }

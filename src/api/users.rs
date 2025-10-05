@@ -274,17 +274,17 @@ pub async fn refresh_token(
 
     // Check if refresh token exists in database and is not revoked
     let refresh_token_hash = hash_token(&refresh_claims.jti);
-    let refresh_token_record = sqlx::query!(
-        "SELECT user_id, client_id, scopes, revoked FROM refresh_tokens WHERE token_hash = ?1 AND expires_at > datetime('now')",
-        refresh_token_hash
+    let refresh_token_record: Option<(String, String, String, Option<bool>)> = sqlx::query_as(
+        "SELECT user_id, client_id, scopes, revoked FROM refresh_tokens WHERE token_hash = ?1 AND expires_at > datetime('now')"
     )
+    .bind(&refresh_token_hash)
     .fetch_optional(&state.pool)
     .await?;
 
-    let refresh_token_record = refresh_token_record
+    let (user_id, client_id, scopes_str, revoked) = refresh_token_record
         .ok_or_else(|| AppError::Unauthorized("Refresh token not found or expired".to_string()))?;
 
-    if refresh_token_record.revoked.unwrap_or(false) {
+    if revoked.unwrap_or(false) {
         return Err(AppError::Unauthorized("Refresh token has been revoked".to_string()));
     }
 
@@ -292,25 +292,25 @@ pub async fn refresh_token(
     let user = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE id = ?1"
     )
-    .bind(&refresh_token_record.user_id)
+    .bind(&user_id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AppError::Unauthorized("User not found".to_string()))?;
 
     // Parse scopes from stored token (stored as JSON array)
-    let scopes_json: serde_json::Value = serde_json::from_str(&refresh_token_record.scopes)
+    let scopes_json: serde_json::Value = serde_json::from_str(&scopes_str)
         .map_err(|e| AppError::Other(anyhow::anyhow!("Invalid scopes JSON: {}", e)))?;
     let scopes = ScopeSet::from_json_array(&scopes_json)
         .map_err(|e| AppError::Other(anyhow::anyhow!("Invalid scopes: {}", e)))?;
 
     // Generate new access token
     let (new_access_token, access_jti) = token_generator
-        .generate_access_token(Some(&user.id), &refresh_token_record.client_id, &scopes, 60 * 24) // 24 hour token
+        .generate_access_token(Some(&user.id), &client_id, &scopes, 60 * 24) // 24 hour token
         .map_err(|e| AppError::Other(anyhow::anyhow!("Access token generation failed: {}", e)))?;
 
     // Generate new refresh token (rotate refresh tokens for security)
     let (new_refresh_token, refresh_jti) = token_generator
-        .generate_refresh_token(Some(&user.id), &refresh_token_record.client_id, &scopes, 60 * 24 * 30) // 30 day token
+        .generate_refresh_token(Some(&user.id), &client_id, &scopes, 60 * 24 * 30) // 30 day token
         .map_err(|e| AppError::Other(anyhow::anyhow!("Refresh token generation failed: {}", e)))?;
 
     let access_expires_at = Utc::now() + Duration::minutes(60 * 24); // 24 hours
@@ -323,9 +323,9 @@ pub async fn refresh_token(
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
     )
     .bind(hash_token(&access_jti))
-    .bind(&refresh_token_record.client_id)
+    .bind(&client_id)
     .bind(&user.id)
-    .bind(&refresh_token_record.scopes)
+    .bind(&scopes_str)
     .bind(&access_expires_at)
     .bind(&Utc::now())
     .bind(false)
@@ -345,9 +345,9 @@ pub async fn refresh_token(
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
     )
     .bind(hash_token(&refresh_jti))
-    .bind(&refresh_token_record.client_id)
+    .bind(&client_id)
     .bind(&user.id)
-    .bind(&refresh_token_record.scopes)
+    .bind(&scopes_str)
     .bind(&refresh_expires_at)
     .bind(&Utc::now())
     .bind(false)
